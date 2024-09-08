@@ -105,19 +105,23 @@ elif page == "Bowling Action Analyzer":
 
         return arm_angle, shoulder_alignment
 
+    # Define a function to determine delta color based on the difference from the ideal range
+    def get_delta_color(angle, ideal_range):
+        lower_bound, upper_bound = ideal_range
+        delta = min(abs(angle - lower_bound), abs(angle - upper_bound))
+
+        if 10 <= delta <= 15:
+            return "normal"  # Green
+        else:
+            return "inverse"  # Red
+
     # Add Start and Stop buttons
     start_button = st.button("Start Camera")
     stop_button = st.button("Stop Camera")
 
     # Add toggle to select between Left and Right side
     side = st.radio("Select Side", ("Left", "Right"))
-
-    # Map the selection to the correct side
-    side_map = {
-        "Left": "Left",
-        "Right": "Right"
-    }
-    selected_side = side_map[side]
+    selected_side = "Right" if side == "Right" else "Left"
 
     # Start video capture if Start button is pressed
     if start_button:
@@ -135,7 +139,6 @@ elif page == "Bowling Action Analyzer":
 
             excel_data = excel_buffer.getvalue()
 
-            # Offer the file for download
             st.download_button(
                 label="Download Previous Data",
                 data=excel_data,
@@ -148,7 +151,7 @@ elif page == "Bowling Action Analyzer":
             st.session_state.recorded_shoulder_alignments = []
             st.success("Previous records cleared. Starting new session.")
 
-        cap = cv2.VideoCapture(0)  # Change this if a different camera index is needed
+        cap = cv2.VideoCapture(0)
         try:
             with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
                 while cap.isOpened():
@@ -157,75 +160,57 @@ elif page == "Bowling Action Analyzer":
                         st.error("Failed to capture image from camera.")
                         break
 
-                    # Convert the image to RGB
                     image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    # Process the image and get pose landmarks
                     results = pose.process(image_rgb)
 
-                    # Draw landmarks and connections for the selected side
                     if results.pose_landmarks:
-                        if selected_side == "Right":
-                            landmarks = [
-                                mp_pose.PoseLandmark.RIGHT_SHOULDER, 
-                                mp_pose.PoseLandmark.RIGHT_ELBOW, 
-                                mp_pose.PoseLandmark.RIGHT_WRIST, 
-                                mp_pose.PoseLandmark.RIGHT_HIP
-                            ]
-                            connections = [
-                                (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW),
-                                (mp_pose.PoseLandmark.RIGHT_ELBOW, mp_pose.PoseLandmark.RIGHT_WRIST),
-                                (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_HIP)
-                            ]
-
-                        else:
-                            landmarks = [
-                                mp_pose.PoseLandmark.LEFT_SHOULDER, 
-                                mp_pose.PoseLandmark.LEFT_ELBOW, 
-                                mp_pose.PoseLandmark.LEFT_WRIST, 
-                                mp_pose.PoseLandmark.LEFT_HIP
-                            ]
-                            connections = [
-                                (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW),
-                                (mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.LEFT_WRIST),
-                                (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_HIP)
-                            ]
+                        landmarks = [
+                            mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW, 
+                            mp_pose.PoseLandmark.RIGHT_WRIST, mp_pose.PoseLandmark.RIGHT_HIP
+                        ] if selected_side == "Right" else [
+                            mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW, 
+                            mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.LEFT_HIP
+                        ]
 
                         # Draw pose connections for the selected side
-                        for connection in connections:
-                            start = results.pose_landmarks.landmark[connection[0]]
-                            end = results.pose_landmarks.landmark[connection[1]]
+                        for idx, landmark_idx in enumerate(landmarks[:-1]):
+                            start = results.pose_landmarks.landmark[landmark_idx]
+                            end = results.pose_landmarks.landmark[landmarks[idx+1]]
                             cv2.line(frame, 
                                      (int(start.x * frame.shape[1]), int(start.y * frame.shape[0])),
                                      (int(end.x * frame.shape[1]), int(end.y * frame.shape[0])),
                                      (0, 255, 0), 3)
 
-                        # Draw only the selected landmarks on the frame
-                        for landmark_idx in landmarks:
-                            landmark = results.pose_landmarks.landmark[landmark_idx]
-                            cv2.circle(frame, 
-                                       (int(landmark.x * frame.shape[1]), int(landmark.y * frame.shape[0])), 
-                                       5, (0, 255, 0), -1)
-
                         # Calculate the release angle and shoulder alignment for the selected side
                         release_angle, shoulder_alignment = calculate_angles(results.pose_landmarks.landmark, selected_side)
 
-                        # Update Streamlit metrics in real-time
-                        release_angle_display.metric("Release Angle", f"{release_angle:.2f}°", delta=f"{release_angle - ideal_release_angle_range[0]:.2f}°")
-                        shoulder_alignment_display.metric("Shoulder Alignment", f"{shoulder_alignment:.2f}°", delta=f"{shoulder_alignment - ideal_shoulder_alignment_range[0]:.2f}°")
+                        # Get the color for the metrics based on delta
+                        release_angle_color = get_delta_color(release_angle, ideal_release_angle_range)
+                        shoulder_alignment_color = get_delta_color(shoulder_alignment, ideal_shoulder_alignment_range)
+
+                        # Update Streamlit metrics in real-time with appropriate delta color
+                        release_angle_display.metric(
+                            "Release Angle", 
+                            f"{release_angle:.2f}°", 
+                            delta=f"{release_angle - ideal_release_angle_range[0]:.2f}°",
+                            delta_color=release_angle_color
+                        )
+                        shoulder_alignment_display.metric(
+                            "Shoulder Alignment", 
+                            f"{shoulder_alignment:.2f}°", 
+                            delta=f"{shoulder_alignment - ideal_shoulder_alignment_range[0]:.2f}°",
+                            delta_color=shoulder_alignment_color
+                        )
 
                         # Record the angles in session state
                         st.session_state.recorded_release_angles.append(release_angle)
                         st.session_state.recorded_shoulder_alignments.append(shoulder_alignment)
 
-                    # Display the video feed in Streamlit
                     frame_placeholder.image(frame, channels="BGR")
 
-                    # Break if the Stop button is pressed
                     if stop_button:
                         break
         finally:
-            # Release the video capture and destroy OpenCV windows
             cap.release()
             cv2.destroyAllWindows()
 
@@ -234,17 +219,15 @@ elif page == "Bowling Action Analyzer":
             "Release Angle": st.session_state.recorded_release_angles,
             "Shoulder Alignment": st.session_state.recorded_shoulder_alignments
         })
-
-        # Create an in-memory Excel file
+        
+        st.write("Analysis Stopped. Data Recorded.")
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             recorded_data.to_excel(writer, index=False, sheet_name='Bowling Data')
 
         excel_data = excel_buffer.getvalue()
-
-        # Create a download button for the Excel file
         st.download_button(
-            label="Download Data",
+            label="Download Bowling Data",
             data=excel_data,
             file_name="bowling_data.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
